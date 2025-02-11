@@ -1,3 +1,4 @@
+
 #
 # Licensed to the Apache Software Foundation (ASF) under one or more
 # contributor license agreements.  See the NOTICE file distributed with
@@ -14,9 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-x-superset-image: &superset-image samrozhkov/superset-public:${TAG}
+x-superset-image: &superset-image samrozhkov/superset:${TAG}
 x-superset-depends-on: &superset-depends-on
-  - db
+  #- db
   - redis
 x-superset-volumes: &superset-volumes
   # /app/pythonpath_docker will be appended to the PYTHONPATH in the final container
@@ -39,6 +40,9 @@ services:
     restart: unless-stopped
     volumes:
       - db_home:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+    profiles: ['db']
 
   superset:
     env_file: docker/.env-prod
@@ -87,10 +91,73 @@ services:
     healthcheck:
       disable: true
 
+  superset-websocket:
+    container_name: superset_websocket
+    build: ./superset-websocket
+    image: samrozhkov/superset-websocket:latest
+    ports:
+      - 8080:8080
+    depends_on:
+      - redis
+    profiles: ['ws']
+    # Mount everything in superset-websocket into container and
+    # then exclude node_modules and dist with bogus volume mount.
+    # This is necessary because host and container need to have
+    # their own, separate versions of these files. .dockerignore
+    # does not seem to work when starting the service through
+    # docker-compose.
+    #
+    # For example, node_modules may contain libs with native bindings.
+    # Those bindings need to be compiled for each OS and the container
+    # OS is not necessarily the same as host OS.
+    volumes:
+      - ./superset-websocket:/home/superset-websocket
+      - /home/superset-websocket/node_modules
+      - /home/superset-websocket/dist
+    environment:
+      - PORT=8080
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_SSL=false
+
+  keycloak:
+   container_name: keycloak
+   image: bitnami/keycloak:${KEYCLOAK_VERSION:-latest}
+   depends_on:
+     - db
+   env_file: docker/.env-prod
+   volumes:
+     - ./certs:/opt/bitnami/keycloak/certs
+   ports:
+     - "28080:8080"
+   restart: unless-stopped
+   profiles: ['kc']
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana
+    volumes: 
+      - 'metrics:/var/lib/grafana'
+    ports:
+      - "3000:3000"
+    profiles: ['metric']
+
+  graphite:
+    container_name: graphite
+    image: graphiteapp/graphite-statsd
+    ports:
+      - "8080:80"
+    volumes:
+      - 'metrics:/opt/graphite/storage'
+    profiles: ['metric']
+
+
 volumes:
   superset_home:
     external: false
   db_home:
     external: false
   redis:
+    external: false
+  metrics:
     external: false
